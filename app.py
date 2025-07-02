@@ -77,7 +77,7 @@ def parse_and_annotate_vcf(file):
             continue
         chrom = parts[0]
         pos = int(parts[1])
-        rsid = parts[2]
+        rsid = parts[2]  # ensure rsID is captured
         ref = parts[3]
         alt_list = parts[4].split(',')
         for alt in alt_list:

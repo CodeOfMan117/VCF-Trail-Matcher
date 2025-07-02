@@ -7,64 +7,65 @@ import plotly.express as px
 st.set_page_config(page_title="Personalized Variant Annotator", layout="wide")
 st.title("🧬 Personalized Medicine: VCF Annotation App")
 
-# Enhanced annotation with fallback to Ensembl and UCSC
+# Annotate using rsID as primary key
 
-def annotate_variant(chrom, pos, ref, alt):
-    hgvs = f"chr{chrom}:g.{pos}{ref}>{alt}"
-    url_mv = f"https://myvariant.info/v1/variant/{hgvs}"
+def annotate_variant(rsid, chrom, pos, ref, alt):
+    if rsid and rsid != ".":
+        url_mv = f"https://myvariant.info/v1/variant/{rsid}"
+        try:
+            response = requests.get(url_mv, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            gene = data.get('gene', {}).get('symbol', 'NA')
+            clinical = data.get('clinvar', {})
+            return {
+                "chr": chrom,
+                "pos": pos,
+                "ref": ref,
+                "alt": alt,
+                "gene": gene,
+                "clinical_significance": clinical.get('clinical_significance', 'Not available'),
+                "condition": clinical.get('trait', ['Unknown'])[0] if isinstance(clinical.get('trait', []), list) else 'Unknown',
+                "link": f"https://www.ncbi.nlm.nih.gov/clinvar/variation/{clinical.get('rcv', [{}])[0].get('accession', '')}" if 'rcv' in clinical else '',
+                "source": "MyVariant.info (rsID)"
+            }
+        except:
+            pass
+
+    # Fallback to Ensembl using position
     try:
-        response = requests.get(url_mv, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        gene = data.get('gene', {}).get('symbol', 'NA')
-        clinical = data.get('clinvar', {})
+        ensembl_url = f"https://rest.ensembl.org/vep/human/region/{chrom}:{pos}-{pos}/{ref}/{alt}?content-type=application/json"
+        ens_response = requests.get(ensembl_url, headers={"Content-Type": "application/json"}, timeout=10)
+        ens_response.raise_for_status()
+        ens_data = ens_response.json()
+        gene_name = ens_data[0]['transcript_consequences'][0].get('gene_symbol', 'Unknown') if ens_data else 'Unknown'
         return {
             "chr": chrom,
             "pos": pos,
             "ref": ref,
             "alt": alt,
-            "gene": gene,
-            "clinical_significance": clinical.get('clinical_significance', 'NA'),
-            "condition": clinical.get('trait', ['NA'])[0] if isinstance(clinical.get('trait', []), list) else 'NA',
-            "link": f"https://www.ncbi.nlm.nih.gov/clinvar/variation/{clinical.get('rcv', [{}])[0].get('accession', '')}" if 'rcv' in clinical else '',
-            "source": "MyVariant.info"
+            "gene": gene_name,
+            "clinical_significance": "Not available",
+            "condition": "Not found via rsID, found in Ensembl",
+            "link": f"https://rest.ensembl.org/vep/human/region/{chrom}:{pos}-{pos}/{ref}/{alt}",
+            "source": "Ensembl"
         }
-    except requests.HTTPError as http_err:
-        if response.status_code == 404:
-            try:
-                ensembl_url = f"https://rest.ensembl.org/vep/human/region/{chrom}:{pos}-{pos}/{ref}/{alt}?content-type=application/json"
-                ens_response = requests.get(ensembl_url, headers={"Content-Type": "application/json"}, timeout=10)
-                ens_response.raise_for_status()
-                ens_data = ens_response.json()
-                gene_name = ens_data[0]['transcript_consequences'][0].get('gene_symbol', 'Unknown') if ens_data else 'Unknown'
-                return {
-                    "chr": chrom,
-                    "pos": pos,
-                    "ref": ref,
-                    "alt": alt,
-                    "gene": gene_name,
-                    "clinical_significance": "NA",
-                    "condition": "Not found in MyVariant, found in Ensembl",
-                    "link": f"https://rest.ensembl.org/vep/human/region/{chrom}:{pos}-{pos}/{ref}/{alt}",
-                    "source": "Ensembl"
-                }
-            except:
-                pass
+    except:
+        pass
 
-    # Manual fallback (UCSC link)
     return {
         "chr": chrom,
         "pos": pos,
         "ref": ref,
         "alt": alt,
         "gene": "Unknown",
-        "clinical_significance": "NA",
+        "clinical_significance": "Not available",
         "condition": "Not found in any source",
         "link": f"https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg38&position=chr{chrom}:{pos}",
         "source": "Manual Fallback"
     }
 
-# Load and annotate VCF
+# Load and annotate VCF using rsID
 
 def parse_and_annotate_vcf(file):
     annotations = []
@@ -76,10 +77,11 @@ def parse_and_annotate_vcf(file):
             continue
         chrom = parts[0]
         pos = int(parts[1])
+        rsid = parts[2]
         ref = parts[3]
         alt_list = parts[4].split(',')
         for alt in alt_list:
-            ann = annotate_variant(chrom, pos, ref, alt)
+            ann = annotate_variant(rsid, chrom, pos, ref, alt)
             annotations.append(ann)
     return pd.DataFrame(annotations)
 

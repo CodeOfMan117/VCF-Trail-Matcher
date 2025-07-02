@@ -7,28 +7,36 @@ st.set_page_config(page_title="Personalized Variant Annotator", layout="wide")
 st.title("🧬 Personalized Medicine: VCF Annotation App")
 
 def annotate_variant(chrom, pos, ref, alt):
-    query = f"{chrom}-{pos}-{ref}-{alt}"
-    url = f"https://api.variantvalidator.org/variantvalidator/variant/GRCh38/{query}/annotation"
-    headers = {"Content-Type": "application/json"}
+    # Format for MyVariant.info: chr{chrom}:g.{pos}{ref}>{alt}
+    hgvs = f"chr{chrom}:g.{pos}{ref}>{alt}"
+    url = f"https://myvariant.info/v1/variant/{hgvs}"
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            result = {
-                "chr": chrom,
-                "pos": pos,
-                "ref": ref,
-                "alt": alt,
-                "gene": data.get('transcript_consequences', [{}])[0].get('gene_symbol', 'NA') if 'transcript_consequences' in data else 'NA',
-                "clinical_significance": data.get('clinical_significance', 'NA'),
-                "condition": data.get('conditions', [{}])[0].get('name', 'NA') if 'conditions' in data else 'NA',
-                "link": data.get('external_link', 'https://www.ncbi.nlm.nih.gov/clinvar/') if data else 'https://www.ncbi.nlm.nih.gov/clinvar/',
-                "source": "ClinVar"
-            }
-        else:
-            result = {"chr": chrom, "pos": pos, "ref": ref, "alt": alt, "error": "Not Found"}
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        result = {
+            "chr": chrom,
+            "pos": pos,
+            "ref": ref,
+            "alt": alt,
+            "gene": data.get('gene', {}).get('symbol', 'NA'),
+            "clinical_significance": data.get('clinvar', {}).get('clinical_significance', 'NA'),
+            "condition": data.get('clinvar', {}).get('trait', ['NA'])[0] if isinstance(data.get('clinvar', {}).get('trait', []), list) else 'NA',
+            "link": f"https://www.ncbi.nlm.nih.gov/clinvar/variation/{data.get('clinvar', {}).get('rcv', [{}])[0].get('accession', '')}" if 'clinvar' in data else '',
+            "source": "MyVariant.info"
+        }
     except Exception as e:
-        result = {"chr": chrom, "pos": pos, "ref": ref, "alt": alt, "error": str(e)}
+        result = {
+            "chr": chrom,
+            "pos": pos,
+            "ref": ref,
+            "alt": alt,
+            "gene": "NA",
+            "clinical_significance": "Error",
+            "condition": str(e),
+            "link": "",
+            "source": "MyVariant.info (fail)"
+        }
     return result
 
 def parse_and_annotate_vcf(file):
@@ -68,5 +76,5 @@ if uploaded_file is not None:
         if 'link' in df.columns:
             st.markdown("### 🔗 External Links")
             for idx, row in df.iterrows():
-                if 'link' in row and row['link'] != "":
+                if row.get('link'):
                     st.markdown(f"[{row['gene']} ({row['condition']}) - {row['clinical_significance']}]({row['link']})")
